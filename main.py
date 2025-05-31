@@ -1,6 +1,6 @@
 import streamlit as st
 import json
-import time
+import time # Not explicitly used, but often kept for potential delays
 import asyncio
 import pandas as pd
 from datetime import datetime
@@ -8,28 +8,40 @@ import google.generativeai as genai
 from google.generativeai.types import GenerationConfig # For specific config
 
 # --- Configuration ---
-# API Key is now accessed from Streamlit secrets.
-# For local development, create a .streamlit/secrets.toml file with:
-# GEMINI_API_KEY = "your_actual_google_ai_api_key_value"
-
 api_key_available = False
-model = None 
+model = None
+gemini_api_key = None # Initialize
 
 try:
-    if "GEMINI_API_KEY" in st.secrets and st.secrets["GEMINI_API_KEY"] and st.secrets["GEMINI_API_KEY"] != "YOUR_ACTUAL_API_KEY_HERE": # Check if key exists and is not placeholder
-        gemini_api_key_from_secrets = st.secrets["GEMINI_API_KEY"]
-        genai.configure(api_key=gemini_api_key_from_secrets)
+    gemini_api_key = st.secrets.get("GEMINI_API_KEY")
+
+    if gemini_api_key and \
+       gemini_api_key.strip() != "" and \
+       gemini_api_key != "YOUR_ACTUAL_API_KEY_HERE": # Check if key exists, is not empty, and is not placeholder
+        
+        genai.configure(api_key=gemini_api_key)
         MODEL_NAME = "gemini-2.0-flash-latest" 
         model = genai.GenerativeModel(MODEL_NAME)
         api_key_available = True
+        if "gemini_init_error" in st.session_state: # Clear any previous init error
+            st.session_state.gemini_init_error = None
         # print(f"Google GenAI configured with model: {MODEL_NAME}") # Optional: for server logs
     else:
-        # print("Warning: GEMINI_API_KEY not found in st.secrets or is a placeholder. API calls will be skipped.")
-        pass # Model remains None
+        # Key is missing, empty, or the placeholder.
+        # api_key_available remains False, model remains None.
+        # UI warnings will be displayed based on these flags.
+        if not gemini_api_key or gemini_api_key.strip() == "":
+            print("Warning: GEMINI_API_KEY not found or is empty in Streamlit secrets.")
+            st.session_state.gemini_init_error = "GEMINI_API_KEY not found or is empty in Streamlit secrets."
+        elif gemini_api_key == "YOUR_ACTUAL_API_KEY_HERE":
+            print("Warning: GEMINI_API_KEY is a placeholder. Please set a valid key in Streamlit secrets.")
+            st.session_state.gemini_init_error = "GEMINI_API_KEY is a placeholder. Please use a valid key."
+        
 except Exception as e:
-    # This error will display in the Streamlit app if configuration fails
-    st.error(f"Error configuring Google GenAI: {e}. Ensure your API key in secrets.toml is correct and the library is installed.")
-    model = None # Ensure model is None if config fails
+    print(f"Error during Google GenAI configuration: {e}") # Log to server for debugging
+    st.session_state.gemini_init_error = str(e) 
+    model = None 
+    api_key_available = False
 
 
 # --- Scripted Questions (Comprehensive selection from Table 7) ---
@@ -238,6 +250,8 @@ def initialize_session_state():
         st.session_state.ai_is_processing = False
     if "next_ai_message" not in st.session_state:
         st.session_state.next_ai_message = None
+    if "gemini_init_error" not in st.session_state: # Added this line
+        st.session_state.gemini_init_error = None
 
 def add_to_log(speaker, utterance_type, text, scripted_q_id=None, scripted_q_obj=None):
     log_entry = {
@@ -261,7 +275,7 @@ async def process_ai_turn(user_input_text=None):
         action_result = None
         if st.session_state.follow_up_count < MAX_FOLLOW_UPS_PER_SCRIPTED:
             turn_history_for_prompt = []
-            for log_entry in st.session_state.conversation_log[-5:]:
+            for log_entry in st.session_state.conversation_log[-5:]: # Get last 5 turns for context
                 turn_history_for_prompt.append(
                     {"speaker": log_entry["speaker"], "text": log_entry["utterance_text"]}
                 )
@@ -304,15 +318,37 @@ async def process_ai_turn(user_input_text=None):
 st.set_page_config(layout="wide", page_title="Isabella - AI Interviewer")
 st.title("🗣️ Isabella - The Adaptive AI Interviewer")
 
-if not api_key_available and not model : # Checks if API key was explicitly missing from secrets
-    st.error("🛑 **API Key Not Configured!** Please set your `GEMINI_API_KEY` in Streamlit's secrets (e.g., `.streamlit/secrets.toml` for local development). The AI interviewer will run in a very basic simulated mode without real AI capabilities.")
-elif not model and api_key_available : # Key was there, but model init failed for other reasons
-     st.warning("⚠️ Gemini model could not be initialized. Check for errors related to the API key (e.g., validity, permissions) or Google AI service status. Running in basic simulation mode.")
+# Initialize session state for all components that might use it before this point
+initialize_session_state() 
+
+# Check API key status and display appropriate messages
+if not api_key_available:
+    # Attempt to get the key value again for this specific check, if not already available from top config
+    # This helps determine if the key was missing/placeholder vs. an init error
+    key_for_check = st.secrets.get("GEMINI_API_KEY")
+    init_error_message = st.session_state.get('gemini_init_error', "")
+
+    if not key_for_check or \
+       key_for_check.strip() == "" or \
+       key_for_check == "YOUR_ACTUAL_API_KEY_HERE":
+        st.error(
+            "🛑 **API Key Not Configured or is a Placeholder!** "
+            "Please set your `GEMINI_API_KEY` in Streamlit's secrets. "
+            "The AI interviewer will run in a very basic simulated mode."
+        )
+    else: # API key was present but model initialization failed
+        detailed_error = f"Details: {init_error_message}." if init_error_message else "Ensure your API key is valid and the 'google-generativeai' library is installed."
+        st.warning(
+            f"⚠️ **Gemini Model Initialization Failed!** "
+            f"{detailed_error} "
+            "The AI interviewer will run in a basic simulation mode."
+        )
+elif not model: # Should ideally not be hit if api_key_available is True, but as a fallback.
+     st.warning("⚠️ Gemini model is unexpectedly unavailable after successful API key configuration. Running in basic simulation mode.")
 
 
 st.caption("Powered by Google Gemini, this app simulates an adaptive AI interviewer. Ensure your API key is correctly configured in Streamlit secrets for the full experience.")
 
-initialize_session_state()
 
 # Sidebar
 with st.sidebar:
@@ -357,7 +393,7 @@ with st.sidebar:
             "interview_started", "interview_finished", "conversation_log", 
             "reflection_notes", "current_scripted_question_index", 
             "current_objective", "current_question_id", "follow_up_count", 
-            "ai_is_processing", "next_ai_message"
+            "ai_is_processing", "next_ai_message", "gemini_init_error" # Added gemini_init_error
         ]
         for key_to_delete in keys_to_clear:
             if key_to_delete in st.session_state:
@@ -369,7 +405,8 @@ with st.sidebar:
 if not st.session_state.interview_started:
     if st.button("🚀 Start Interview", type="primary"):
         if not model: # Double check if model is not available before starting
-            st.warning("Cannot start interview: Gemini model not initialized. Please check API key configuration in Streamlit secrets.")
+            # Warnings/errors about API key are already shown above
+            st.warning("Cannot start interview: Gemini model not initialized. Please check API key configuration and error messages above.")
         else:
             st.session_state.interview_started = True
             st.session_state.ai_is_processing = True 
@@ -413,7 +450,7 @@ else: # Interview has started
         
         if user_input:
             if not model: # Check again before processing user input
-                 st.warning("Cannot process response: Gemini model not initialized. Please check API key configuration.")
+                st.warning("Cannot process response: Gemini model not initialized. Please check API key configuration.")
             else:
                 st.session_state.ai_is_processing = True 
                 asyncio.run(process_ai_turn(user_input_text=user_input))
@@ -422,4 +459,5 @@ else: # Interview has started
     elif st.session_state.ai_is_processing and not st.session_state.interview_finished:
         if not st.session_state.next_ai_message: 
             with st.chat_message("assistant"): # Use "assistant"
-                st.spinner("Isabella is thinking...")
+                with st.spinner("Isabella is thinking..."): # st.spinner needs to be inside a container like st.chat_message or other layout element
+                    time.sleep(0.1) # Ensure spinner has a moment to render if processing is very fast
