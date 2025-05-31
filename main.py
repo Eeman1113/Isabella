@@ -8,7 +8,7 @@ import google.generativeai as genai
 from google.generativeai.types import GenerationConfig # For specific config
 
 # --- Configuration ---
-GEMINI_API_KEY = st.secrets('GEMINI_API_KEY') #yeah go ahed take my api key
+GEMINI_API_KEY = "AIzaSyCTyBJ5dQZoWWgB14Wjd0l7heigxDRT-qs" #yeah go ahed take my api key
 if GEMINI_API_KEY == "YOUR_ACTUAL_API_KEY_HERE":
     # This is a placeholder, API calls will fail without a real key.
     # In a real app, you might load this from st.secrets or an environment variable.
