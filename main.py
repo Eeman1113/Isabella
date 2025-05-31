@@ -1,6 +1,6 @@
 import streamlit as st
 import json
-import time # Not explicitly used, but often kept for potential delays
+import time
 import asyncio
 import pandas as pd
 from datetime import datetime
@@ -8,40 +8,25 @@ import google.generativeai as genai
 from google.generativeai.types import GenerationConfig # For specific config
 
 # --- Configuration ---
-api_key_available = False
-model = None
-gemini_api_key = None # Initialize
+GEMINI_API_KEY = "AIzaSyCTyBJ5dQZoWWgB14Wjd0l7heigxDRT-qs" #yeah go ahed take my api key
+if GEMINI_API_KEY == "YOUR_ACTUAL_API_KEY_HERE":
+    # This is a placeholder, API calls will fail without a real key.
+    # In a real app, you might load this from st.secrets or an environment variable.
+    pass 
 
 try:
-    gemini_api_key = st.secrets.get("GEMINI_API_KEY")
-
-    if gemini_api_key and \
-       gemini_api_key.strip() != "" and \
-       gemini_api_key != "YOUR_ACTUAL_API_KEY_HERE": # Check if key exists, is not empty, and is not placeholder
-        
-        genai.configure(api_key=gemini_api_key)
-        MODEL_NAME = "gemini-2.0-flash-latest" 
+    if GEMINI_API_KEY and GEMINI_API_KEY != "YOUR_ACTUAL_API_KEY_HERE":
+        genai.configure(api_key=GEMINI_API_KEY)
+        MODEL_NAME = "gemini-1.5-flash-latest" 
         model = genai.GenerativeModel(MODEL_NAME)
-        api_key_available = True
-        if "gemini_init_error" in st.session_state: # Clear any previous init error
-            st.session_state.gemini_init_error = None
         # print(f"Google GenAI configured with model: {MODEL_NAME}") # Optional: for server logs
     else:
-        # Key is missing, empty, or the placeholder.
-        # api_key_available remains False, model remains None.
-        # UI warnings will be displayed based on these flags.
-        if not gemini_api_key or gemini_api_key.strip() == "":
-            print("Warning: GEMINI_API_KEY not found or is empty in Streamlit secrets.")
-            st.session_state.gemini_init_error = "GEMINI_API_KEY not found or is empty in Streamlit secrets."
-        elif gemini_api_key == "YOUR_ACTUAL_API_KEY_HERE":
-            print("Warning: GEMINI_API_KEY is a placeholder. Please set a valid key in Streamlit secrets.")
-            st.session_state.gemini_init_error = "GEMINI_API_KEY is a placeholder. Please use a valid key."
-        
+        model = None 
+        # print("Warning: GEMINI_API_KEY not set. API calls will be skipped and simulation will be basic.")
+
 except Exception as e:
-    print(f"Error during Google GenAI configuration: {e}") # Log to server for debugging
-    st.session_state.gemini_init_error = str(e) 
-    model = None 
-    api_key_available = False
+    st.error(f"Error configuring Google GenAI: {e}. Please ensure your API key is correct and the library is installed.")
+    model = None
 
 
 # --- Scripted Questions (Comprehensive selection from Table 7) ---
@@ -52,7 +37,7 @@ SCRIPTED_QUESTIONS = [
     {"id": "intro_3", "text": "If all this sounds good, let's get started!", "objective": "Confirm readiness to start.", "is_statement": True},
     # Life Story & Defining Moments
     {"id": "life_story", "text": "To start, I would like to begin with a big question: tell me the story of your life. Start from the beginning - from your childhood, to education, to family and relationships, and to any major life events you may have had.", "objective": "Understand the participant's overall life narrative and key milestones."},
-    {"id": "crossroads", "text": "Some people tell us that they've reached a crossroads at some points in their life where multiple paths were available, and their choice thenmade a significant difference in defining who they are. What about you? Was there a moment like that for you, and if so, could you tell me the whole story about that from start to finish?", "objective": "Explore significant life-altering decisions or moments."},
+    {"id": "crossroads", "text": "Some people tell us that they've reached a crossroads at some points in their life where multiple paths were available, and their choice then made a significant difference in defining who they are. What about you? Was there a moment like that for you, and if so, could you tell me the whole story about that from start to finish?", "objective": "Explore significant life-altering decisions or moments."},
     {"id": "conscious_choice", "text": "Some people tell us they made a conscious choice or decision in moments like these, while others say it 'just happened'. What about you?", "objective": "Understand the perceived agency in significant life events."},
     {"id": "helping_hand_crossroads", "text": "Do you think another person or an organization could have lent a helping hand during moments like this?", "objective": "Explore perceived support systems or lack thereof during critical times."},
     # Family & Relationships
@@ -118,13 +103,12 @@ async def get_gemini_interviewer_action(current_question_objective, turn_history
     """
     Calls the Gemini API using google-generativeai to get the AI interviewer's next action.
     """
-    global model # Use the globally (module-level) initialized model
     if not model: 
-        st.sidebar.warning("Gemini model not initialized (API key likely missing or invalid). Using basic simulated response.")
+        st.sidebar.warning("Gemini model not initialized. Using basic simulated response.")
         action = "move_to_next_scripted"
         response_text = "Thank you for sharing that. (API not configured, moving on with simulation)"
         updated_reflection_notes = reflection_notes_for_prompt + "\n- (API not configured, simulation mode)"
-        if turn_history_for_prompt and len(turn_history_for_prompt[-1].get("text", "").split()) < 5: 
+        if turn_history_for_prompt and len(turn_history_for_prompt[-1].get("text", "").split()) < 5: # Check if history is not empty
             action = "ask_follow_up"
             response_text = "Could you please tell me a bit more? (API not configured, simulated follow-up)"
         return {
@@ -216,7 +200,7 @@ Your response MUST only contain lines starting with FOLLOWUP:, MOVE_ON, TRANSITI
             new_reflection_content += line_stripped.replace("REFLECT:", "").strip() + " "
 
     response_text = follow_up_text if action == "ask_follow_up" else transition_text
-    if not response_text and action == "move_to_next_scripted": # Fallback if Gemini only said MOVE_ON
+    if not response_text and action == "move_to_next_scripted":
         response_text = "Okay, let's move on to the next point."
 
     updated_reflection_notes = st.session_state.reflection_notes
@@ -250,8 +234,6 @@ def initialize_session_state():
         st.session_state.ai_is_processing = False
     if "next_ai_message" not in st.session_state:
         st.session_state.next_ai_message = None
-    if "gemini_init_error" not in st.session_state: # Added this line
-        st.session_state.gemini_init_error = None
 
 def add_to_log(speaker, utterance_type, text, scripted_q_id=None, scripted_q_obj=None):
     log_entry = {
@@ -275,7 +257,7 @@ async def process_ai_turn(user_input_text=None):
         action_result = None
         if st.session_state.follow_up_count < MAX_FOLLOW_UPS_PER_SCRIPTED:
             turn_history_for_prompt = []
-            for log_entry in st.session_state.conversation_log[-5:]: # Get last 5 turns for context
+            for log_entry in st.session_state.conversation_log[-5:]:
                 turn_history_for_prompt.append(
                     {"speaker": log_entry["speaker"], "text": log_entry["utterance_text"]}
                 )
@@ -285,7 +267,7 @@ async def process_ai_turn(user_input_text=None):
                 st.session_state.reflection_notes
             )
         
-        if action_result: 
+        if action_result: # This block will now always be entered if API call was made
             st.session_state.reflection_notes = action_result["new_reflection_notes"]
             if action_result["action"] == "ask_follow_up":
                 st.session_state.follow_up_count += 1
@@ -318,37 +300,14 @@ async def process_ai_turn(user_input_text=None):
 st.set_page_config(layout="wide", page_title="Isabella - AI Interviewer")
 st.title("🗣️ Isabella - The Adaptive AI Interviewer")
 
-# Initialize session state for all components that might use it before this point
-initialize_session_state() 
+if not model and GEMINI_API_KEY == "YOUR_ACTUAL_API_KEY_HERE":
+    st.error("🛑 **API Key Not Set!** Please set your `GEMINI_API_KEY` in the script. The interviewer will run in a very basic simulated mode without real AI capabilities.")
+elif not model:
+     st.warning("⚠️ Gemini model could not be initialized. Check API key or errors. Running in basic simulation mode.")
 
-# Check API key status and display appropriate messages
-if not api_key_available:
-    # Attempt to get the key value again for this specific check, if not already available from top config
-    # This helps determine if the key was missing/placeholder vs. an init error
-    key_for_check = st.secrets.get("GEMINI_API_KEY")
-    init_error_message = st.session_state.get('gemini_init_error', "")
+st.caption("Powered by Research")
 
-    if not key_for_check or \
-       key_for_check.strip() == "" or \
-       key_for_check == "YOUR_ACTUAL_API_KEY_HERE":
-        st.error(
-            "🛑 **API Key Not Configured or is a Placeholder!** "
-            "Please set your `GEMINI_API_KEY` in Streamlit's secrets. "
-            "The AI interviewer will run in a very basic simulated mode."
-        )
-    else: # API key was present but model initialization failed
-        detailed_error = f"Details: {init_error_message}." if init_error_message else "Ensure your API key is valid and the 'google-generativeai' library is installed."
-        st.warning(
-            f"⚠️ **Gemini Model Initialization Failed!** "
-            f"{detailed_error} "
-            "The AI interviewer will run in a basic simulation mode."
-        )
-elif not model: # Should ideally not be hit if api_key_available is True, but as a fallback.
-     st.warning("⚠️ Gemini model is unexpectedly unavailable after successful API key configuration. Running in basic simulation mode.")
-
-
-st.caption("Powered by Google Gemini, this app simulates an adaptive AI interviewer. Ensure your API key is correctly configured in Streamlit secrets for the full experience.")
-
+initialize_session_state()
 
 # Sidebar
 with st.sidebar:
@@ -356,7 +315,7 @@ with st.sidebar:
     st.text_area("Live Notes:", value=st.session_state.reflection_notes, height=300, disabled=True, key="reflection_display")
     
     st.markdown("---")
-    st.subheader("💾 Save Interview Data")
+    st.subheader("💾 Save Progress")
     if st.session_state.interview_started and st.session_state.conversation_log:
         df_log = pd.DataFrame(st.session_state.conversation_log)
         csv_log_data = df_log.to_csv(index=False).encode('utf-8')
@@ -368,9 +327,9 @@ with st.sidebar:
             key="download_current_log_button"
         )
     else:
-        st.button("Download Interview Log (CSV)", disabled=True, help="Start the interview and have some conversation to enable log download.")
+        st.button("Download Interview Log (CSV)", disabled=True, help="Start the interview to enable log download.")
 
-    if st.session_state.interview_started and st.session_state.reflection_notes != "Initial reflection: No specific insights about the participant yet.":
+    if st.session_state.interview_started and st.session_state.reflection_notes:
         reflection_data = st.session_state.reflection_notes.encode('utf-8')
         st.download_button(
             label="Download Reflections (TXT)",
@@ -380,7 +339,7 @@ with st.sidebar:
             key="download_current_reflections_button"
         )
     else:
-        st.button("Download Reflections (TXT)", disabled=True, help="Start the interview and generate some reflections to enable download.")
+        st.button("Download Reflections (TXT)", disabled=True, help="Start the interview to enable reflection download.")
 
 
     if st.session_state.interview_finished:
@@ -388,49 +347,34 @@ with st.sidebar:
     
     st.markdown("---")
     if st.button("🔄 Restart Interview", type="secondary"):
-        # Clear relevant session state keys to truly restart
-        keys_to_clear = [
-            "interview_started", "interview_finished", "conversation_log", 
-            "reflection_notes", "current_scripted_question_index", 
-            "current_objective", "current_question_id", "follow_up_count", 
-            "ai_is_processing", "next_ai_message", "gemini_init_error" # Added gemini_init_error
-        ]
-        for key_to_delete in keys_to_clear:
-            if key_to_delete in st.session_state:
-                del st.session_state[key_to_delete]
-        initialize_session_state() # Re-initialize to default values
+        for key_to_delete in list(st.session_state.keys()): 
+            del st.session_state[key_to_delete]
+        initialize_session_state() 
         st.rerun()
 
 # Main Interview Area
 if not st.session_state.interview_started:
     if st.button("🚀 Start Interview", type="primary"):
-        if not model: # Double check if model is not available before starting
-            # Warnings/errors about API key are already shown above
-            st.warning("Cannot start interview: Gemini model not initialized. Please check API key configuration and error messages above.")
-        else:
-            st.session_state.interview_started = True
-            st.session_state.ai_is_processing = True 
-            asyncio.run(process_ai_turn()) 
-            st.rerun()
-else: # Interview has started
-    # Display conversation history from the log
+        st.session_state.interview_started = True
+        st.session_state.ai_is_processing = True 
+        asyncio.run(process_ai_turn()) 
+        st.rerun()
+else:
     for log_entry in st.session_state.conversation_log:
-        # Use "assistant" for AI as per st.chat_message convention
-        with st.chat_message("assistant" if log_entry["speaker"] == "AI" else "user"):
+        with st.chat_message("ai" if log_entry["speaker"] == "AI" else "user"): # Consistent naming with Streamlit
             st.write(log_entry["utterance_text"])
 
-    # Display the AI's next pending message if it's ready and not yet logged
     if st.session_state.next_ai_message and not st.session_state.ai_is_processing:
         ai_msg_info = st.session_state.next_ai_message
-        with st.chat_message("assistant"): # Use "assistant"
+        with st.chat_message("ai"): # Consistent naming
             st.write(ai_msg_info["text"])
         
         add_to_log("AI", 
-                   ai_msg_info["type"], 
-                   ai_msg_info["text"],
-                   st.session_state.current_question_id, 
-                   st.session_state.current_objective)
-        
+                ai_msg_info["type"], 
+                ai_msg_info["text"],
+                st.session_state.current_question_id, 
+                st.session_state.current_objective)
+    
         st.session_state.next_ai_message = None 
 
         if ai_msg_info.get("is_statement") and not st.session_state.interview_finished:
@@ -438,26 +382,20 @@ else: # Interview has started
             asyncio.run(process_ai_turn()) 
             st.rerun() 
 
-    # Determine if user can speak
     can_user_speak = not st.session_state.interview_finished and \
-                     not st.session_state.ai_is_processing and \
-                     not (st.session_state.next_ai_message and st.session_state.next_ai_message.get("is_statement"))
+                    not st.session_state.ai_is_processing and \
+                    not (st.session_state.next_ai_message and st.session_state.next_ai_message.get("is_statement"))
 
     if can_user_speak:
         user_prompt_text = "Your response to Isabella:"
-        # Ensure a unique key for chat_input if it's part of a loop or conditional rendering that might change
         user_input = st.chat_input(user_prompt_text, key=f"user_chat_input_{st.session_state.current_scripted_question_index}_{st.session_state.follow_up_count}")
         
         if user_input:
-            if not model: # Check again before processing user input
-                st.warning("Cannot process response: Gemini model not initialized. Please check API key configuration.")
-            else:
-                st.session_state.ai_is_processing = True 
-                asyncio.run(process_ai_turn(user_input_text=user_input))
-                st.rerun()
+            st.session_state.ai_is_processing = True 
+            asyncio.run(process_ai_turn(user_input_text=user_input))
+            st.rerun()
 
     elif st.session_state.ai_is_processing and not st.session_state.interview_finished:
-        if not st.session_state.next_ai_message: 
-            with st.chat_message("assistant"): # Use "assistant"
-                with st.spinner("Isabella is thinking..."): # st.spinner needs to be inside a container like st.chat_message or other layout element
-                    time.sleep(0.1) # Ensure spinner has a moment to render if processing is very fast
+        if not st.session_state.next_ai_message: # Only show spinner if AI isn't about to immediately display a message
+            with st.chat_message("ai"): # Consistent naming
+                st.spinner("Isabella is thinking...")
